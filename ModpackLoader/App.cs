@@ -371,7 +371,7 @@ public static partial class App
 
     private const string Format = "Loading {0} {1}";
 
-    private const string Fill = " -+*|#";
+    private const string Fill = " -+=*#";
     private static async Task DownloadAsset(int index, string tag, string name, string url, HttpClient http, string path)
     {
         
@@ -386,9 +386,7 @@ public static partial class App
             bar += new string('#', c);
             bar += Fill[(int)(Fill.Length * (f - c))];
             bar += new string(' ', len - c);
-            bar = bar.Pastel(Color.Green);
-            Console.Write($"{string.Format(Format, tag, name)} {bar} {p * 100:F2} %\r");
-            if (p == 1) Console.WriteLine();
+            Console.Write($"{string.Format(Format, tag, name)} {bar.Pastel(Color.Green)} {p * 100:F2} %\r");
         };
         var tempPath = $"{path}.onload";
         await using (var fileStream = new FileStream(tempPath, FileMode.Create,
@@ -396,6 +394,7 @@ public static partial class App
             await http.DownloadDataAsync(url, fileStream, progress);
         
         File.Move(tempPath, path);
+        Console.WriteLine();
     }
 
     private static Task<int> HandleParseError(IEnumerable<Error> errs)
