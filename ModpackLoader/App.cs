@@ -1,22 +1,21 @@
-﻿using System.IO.Compression;
+﻿using System.Drawing;
+using System.IO.Compression;
 using System.Text.RegularExpressions;
 using CommandLine;
 using CurseForge.APIClient;
 using CurseForge.APIClient.Models.Mods;
 using CurseforgeModpackLoader.Curseforge;
 using CurseforgeModpackLoader.Modrinth;
-using Modrinth;
 using Newtonsoft.Json;
+using Pastel;
 using File = System.IO.File;
 
 namespace CurseforgeModpackLoader;
 
 public static partial class App
 {
-    [Verb("modpack", HelpText = "Load modpack")]
+    [Verb("load", HelpText = "Load Modpack From File")]
     private class ModpackOptions {
-        [Option('k', "key", HelpText = "Curseforge API key")]
-        public string? ApiKey { get; set; }
         
         [Option('i', "input", Required = true, HelpText = "Modpack configuration archive")]
         public string Input { get; set; }
@@ -24,8 +23,16 @@ public static partial class App
         [Option('o', "output", Required = true, HelpText = "Output directory")]
         public string Output { get; set; }
         
-        [Option('s', "skip_on_error", HelpText = "Automatically skips file if errors occur", Default = false)]
+        [Option('k', "key", HelpText = "Curseforge API key")]
+        public string? ApiKey { get; set; }
+        [Option('p', "skip_option_pick", HelpText = "Automatically skips options pick", Default = false)]
         public bool Skip { get; set; }
+        
+        
+        [Option('c', "client", HelpText = "Include client mods", Default = false)]
+        public bool Client { get; set; }
+        [Option('s', "server", HelpText = "Include server mods", Default = false)]
+        public bool Server { get; set; }
     }
     public static async Task<int> Main(string[] args)
     {
@@ -79,28 +86,34 @@ public static partial class App
             var div = file.Path.IndexOf('/');
             var tag = file.Path[..(div - 1)];
             var name = file.Path[(div + 1)..];
-            if (file.Environments["client"] != "required" && file.Environments["server"] != "required")
-            {
-                bool load;
-                do {
-                    Console.WriteLine($"Load optional {tag} {name}? (y/n)");
-                    var code = Console.ReadLine()?.ToLower();
-                    if (code == "y")
-                    {
-                        load = true;
-                        break;
-                    }
-                    if (code == "n")
-                    {
-                        load = false;
-                        break;
-                    }
-                    Console.WriteLine("Invalid input. Try again.");
-                } while (true);
-                if (!load) continue;
-            }
+
+            var client = options.Client && file.Environments["client"] == "required";
+            var server = options.Server && file.Environments["server"] == "required";
+            var load = client || server;
+            do {
+                if (load) break;
+                if (options.Skip)
+                {
+                    Console.WriteLine($"Skipping {tag} {name}...");
+                    break;
+                }
+                var clientTag = client ? " client" : "";
+                var serverTag = server ? " server" : "";
+                Console.WriteLine($"Load optional{clientTag}{serverTag} {tag} {name}? (y/n)");
+                var code = Console.ReadLine()?.ToLower();
+                if (code == "y")
+                {
+                    load = true;
+                    break;
+                }
+                if (code == "n") break;
+                Console.WriteLine("Invalid input. Try again.");
+            } while (true);
+
+            if (!load) continue;
             await LoadModrinthAsset(options.Output, file, http);
         }
+
         Console.WriteLine("Asset loading complete! Applying overrides...");
         
         foreach (var entry in archive.Entries)
@@ -141,14 +154,7 @@ public static partial class App
         }
         try
         { 
-            var progress = new Progress<float>();
-            progress.ProgressChanged += (_, p) => {
-                Console.Write($"Loading {tag} {name} {p * 100:F3} %\r");
-                if (p == 1) Console.WriteLine();
-            };
-            await using var fileStream = new FileStream(path, FileMode.Create,
-                FileAccess.Write, FileShare.None);
-            await http.DownloadDataAsync(file.Downloads[0], fileStream, progress);
+            await DownloadAsset(0, tag, name, file.Downloads[0], http, path);
         }
         catch
         {
@@ -288,15 +294,8 @@ public static partial class App
             return;
         }
         try
-        { 
-            var progress = new Progress<float>();
-            progress.ProgressChanged += (_, p) => {
-                Console.Write($"Loading {tag} {mod.Name} {p * 100:F3} %\r");
-                if (p == 1) Console.WriteLine();
-            };
-            await using var fileStream = new FileStream(path, FileMode.Create,
-                FileAccess.Write, FileShare.None);
-            await http.DownloadDataAsync(modFile.DownloadUrl, fileStream, progress);
+        {
+            await DownloadAsset(0, tag, mod.Name, modFile.DownloadUrl, http, path);
         }
         catch
         {
@@ -363,7 +362,36 @@ public static partial class App
             } while (true);
         }
     }
-    
+
+    private const string Format = "Loading {0} {1}";
+
+    private const string Fill = " -+*|#";
+    private static async Task DownloadAsset(int index, string tag, string name, string url, HttpClient http, string path)
+    {
+        
+        var progress = new Progress<float>();
+        progress.ProgressChanged += (_, p) =>
+        {
+            var s = string.Format(Format, tag, name).Length;
+            var len = Console.WindowWidth - int.Max(70, s) - 14;
+            var f = p * len;
+            var c = (int)f;
+            var bar = new string(' ', int.Max(1, 71 - s));
+            bar += new string('#', c);
+            bar += Fill[(int)(Fill.Length * (f - c))];
+            bar += new string(' ', len - c);
+            bar = bar.Pastel(Color.Green);
+            Console.Write($"{string.Format(Format, tag, name)} {bar} {p * 100:F2} %\r");
+            if (p == 1) Console.WriteLine();
+        };
+        var tempPath = $"{path}.onload";
+        await using (var fileStream = new FileStream(tempPath, FileMode.Create,
+                         FileAccess.Write, FileShare.None))
+            await http.DownloadDataAsync(url, fileStream, progress);
+        
+        File.Move(tempPath, path);
+    }
+
     private static Task<int> HandleParseError(IEnumerable<Error> errs)
     {
         foreach (var error in errs)
