@@ -9,7 +9,7 @@ namespace CurseforgeModpackLoader;
 public static class HttpClientProgressExtensions
 {
 	public static async Task DownloadDataAsync(this HttpClient client, string requestUrl, Stream destination,
-		IProgress<float> progress = null, CancellationToken cancellationToken = default)
+		IProgress<FileLoadingProgress> progress = null, CancellationToken cancellationToken = default)
 	{
 		using var response = await client.GetAsync(requestUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 		var contentLength = response.Content.Headers.ContentLength;
@@ -22,15 +22,25 @@ public static class HttpClientProgressExtensions
 		}
 
 		// Such progress and contentLength much reporting Wow!
+		long prevBytes = 0;
+		float speed = 0;
+		var prevTime = DateTime.Now;
 		var progressWrapper = new Progress<long>(totalBytes =>
-			progress.Report(GetProgressPercentage(totalBytes, contentLength.Value)));
+		{
+			var delta = DateTime.Now.Subtract(prevTime);
+			if (delta.TotalMilliseconds >= 100)
+			{
+				speed = 8f * (totalBytes - prevBytes) / (float) delta.TotalSeconds;
+				prevBytes = totalBytes;
+				prevTime = DateTime.Now;
+			}
+			progress.Report(new FileLoadingProgress(totalBytes, contentLength.Value, speed));
+		});
 		await download.CopyToAsync(destination, 81920, progressWrapper, cancellationToken);
-		return;
-		float GetProgressPercentage(float totalBytes, float currentBytes) => totalBytes / currentBytes;
 	}
 
 	static async Task CopyToAsync(this Stream source, Stream destination, int bufferSize,
-		IProgress<long> progress = null, CancellationToken cancellationToken = default(CancellationToken))
+		IProgress<long> progress = null, CancellationToken cancellationToken = default)
 	{
 		if (bufferSize < 0)
 			throw new ArgumentOutOfRangeException(nameof(bufferSize));
@@ -47,11 +57,19 @@ public static class HttpClientProgressExtensions
 		long totalBytesRead = 0;
 		int bytesRead;
 		while ((bytesRead =
-			       await source.ReadAsync(buffer, 0, buffer.Length, cancellationToken).ConfigureAwait(false)) != 0)
+			       await source.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) != 0)
 		{
-			await destination.WriteAsync(buffer, 0, bytesRead, cancellationToken).ConfigureAwait(false);
+			await destination.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken).ConfigureAwait(false);
 			totalBytesRead += bytesRead;
 			progress?.Report(totalBytesRead);
 		}
+	}
+	
+	public readonly struct FileLoadingProgress(long loadedBytes, long totalBytes, float speed)
+	{
+		public long LoadedBytes => loadedBytes;
+		public long TotalBytes => totalBytes;
+		public float Speed => speed;
+		public float Percentage => (float) loadedBytes / totalBytes;
 	}
 }
