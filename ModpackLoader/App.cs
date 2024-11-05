@@ -15,8 +15,8 @@ public static partial class App
 {
     [Verb("modpack", HelpText = "Load modpack")]
     private class ModpackOptions {
-        [Option('k', "key", Required = true, HelpText = "Curseforge API key")]
-        public string ApiKey { get; set; }
+        [Option('k', "key", HelpText = "Curseforge API key")]
+        public string? ApiKey { get; set; }
         
         [Option('i', "input", Required = true, HelpText = "Modpack configuration archive")]
         public string Input { get; set; }
@@ -51,6 +51,12 @@ public static partial class App
 
     private static async Task<int> LoadModrinthModpack(ModpackOptions options, ZipArchive archive)
     {
+        if (options.ApiKey == null)
+        {
+            Console.WriteLine("Cursefotge Api Key is missing!");
+            return -2;
+        }
+        
         var manifestEntry = archive.GetEntry("modrinth.index.json");
         if (manifestEntry == null)
         {
